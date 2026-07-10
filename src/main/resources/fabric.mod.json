@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "autominer",
+  "version": "${version}",
+  "name": "AutoMiner",
+  "description": "自动挖矿：背包满自动传送回家，寻路到绑定箱子存物，再传送回矿点继续挖。",
+  "authors": [
+    "dev"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.autominer.AutoMinerClient"
+    ]
+  },
+  "mixins": [
+    "autominer.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.8",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

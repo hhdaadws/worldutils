@@ -1,0 +1,110 @@
+# AutoMiner (Fabric 1.21.8)
+
+客户端 mod：自动挖矿全循环 —— 菜单传送去矿点 → 自动下挖到设定 y → 直线前挖 → 背包满/镐子耐久不足回家 → 寻路到绑定箱子存物/换镐 → 再传送回去继续。
+
+## 标准流程配置
+
+```
+1. 绑定箱子（可多个，同一维度）：准星对准箱子 → /miner bind
+2. 设置挖矿高度：/miner sety -59
+3. 录制去矿点操作（支持多级菜单）：
+   /miner record mine menu     ← mod 会发送 /menu 打开菜单
+   然后你手动点击菜单里的格子完成传送（几级菜单都行）
+   传送成功后自动保存整个操作序列
+4. 设置回家操作：
+   纯指令: /miner tphome home base   （站着不动等30秒那种也支持）
+   或菜单: /miner record home menu   然后点菜单
+5. /miner start 开始（J 键随时启停）
+```
+
+## 运行逻辑
+
+- 到矿点后**自动垂直下挖**到设定 y（检查脚下液体/空洞，危险即停）
+- 到达 y 后沿固定方向直线挖 1×2 隧道（朝向第一次开挖时自动记录，`/miner face` 可重设）
+- 前方出现水/岩浆、悬崖 → 安全停止并提示
+- **背包满** → 回家 → A* 寻路到箱子1存物 → 箱子满自动换下一个绑定箱子 → 全满则停止
+- **镐子剩余耐久 < 20**（`/miner durability` 可改）→ 回家把旧镐放进箱子，从箱子里拿耐久充足的新镐继续；箱子里没镐了 → 停止
+- 回家指令那种"站立等待30秒"的传送：等待期间不动，最长等 60 秒，失败自动重试 3 次
+- 保留物品（不存入箱子）：默认所有镐子，`/miner keep add torch` 可加
+
+## 命令一览
+
+| 命令 | 作用 |
+|---|---|
+| `/miner bind` / `unbind` / `chests` | 绑定/解绑/列出箱子（准星对准） |
+| `/miner sety <y>` | 挖矿目标高度 |
+| `/miner record mine <指令>` | 录制去矿点操作（指令+点菜单） |
+| `/miner record home <指令>` / `/miner tphome <指令>` | 回家操作（录制 或 纯指令） |
+| `/miner tpmine <指令>` | 去矿点纯指令（不用菜单时） |
+| `/miner durability <n>` | 换镐耐久阈值（默认20） |
+| `/miner keep add/remove/list` | 保留物品管理 |
+| `/miner face` | 重设挖矿朝向为当前视角 |
+| `/miner start / stop / status` | 开始/停止/状态（快捷键 J） |
+
+## 自动种地 AutoFarm（/farm，快捷键 K）
+
+同一个 mod 里的第二套机器人：选定区域内所有耕地循环「种植 → 浇水器加水 → 收获 → 存箱」。
+支持插件种子（实际物品是 sugar 等，靠自定义显示名区分，如"蚕豆种子"）。
+
+### 配置流程
+
+```
+1. 选大区域：准星对方块 /farm pos1、/farm pos2（没指方块用脚下坐标）→ /farm region
+2. 划小区域（不同小区域种不同作物）：再选两角 → /farm zone add 蚕豆
+3. 定义作物种子：手持"蚕豆种子"（实际是 sugar）→ /farm crop add 蚕豆
+   （自动记录物品 id + 显示名，按名字子串匹配）
+4. 绑定箱子：
+   /farm bindseed 蚕豆   ← 准星对准蚕豆种子箱（每种作物一个）
+   /farm bindcrop        ← 作物存放箱（可多个，满了自动换）
+5. 浇水（可选）：
+   /farm bindwaterer     ← 准星对准浇水器（可多个）
+   /farm bindwater       ← 准星对准水面（装桶的地方）
+   背包里放至少一个空桶；/farm interval 20 设间隔（默认 20 分钟）
+6. 成熟判定（插件作物不是原版，需要教一次）：
+   对准一株成熟作物 → /farm learn 蚕豆
+   不确定哪个阶段算成熟？对作物执行 /farm info，把输出（也存在
+   config/autofarm-info.log）发给开发者分析
+7. /farm start 开始（K 键随时启停）
+```
+
+### 运行逻辑
+
+- 优先级：浇水到点 > 背包快满存作物 > 收成熟作物 > 补种空地（种子不够先去种子箱拿）
+- 浇水一轮 = 每个浇水器：去水源装桶 → 走到浇水器右键倒水（`/farm buckets <n>` 每个倒几桶）
+- 没学过成熟特征的作物只种不收（会提示一次）
+- 收获方式 `/farm harvestmode break|use`：左键挖掉（默认）或右键收获
+- 走不到/收不动的地块拉黑 1 分钟后重试；种子箱空 5 分钟后重试；作物箱全满停机
+
+### /farm 命令一览
+
+| 命令 | 作用 |
+|---|---|
+| `/farm pos1` / `pos2` / `region` | 选两角 / 确认大区域 |
+| `/farm zone add <作物>` / `list` / `remove <n>` | 小区域管理（用当前选区） |
+| `/farm crop add <作物>`（手持种子） / `list` / `remove` | 作物种子定义 |
+| `/farm learn <作物>` / `unlearn <作物>` | 学习/清空成熟特征（准星对准成熟作物） |
+| `/farm bindseed <作物>` | 绑定该作物的种子箱 |
+| `/farm bindcrop` / `unbindcrop` | 作物存放箱（可多个） |
+| `/farm bindwaterer` / `unbindwaterer` | 浇水器（可多个） |
+| `/farm bindwater` | 装水点（对准水面） |
+| `/farm interval <分钟>` / `buckets <n>` | 浇水间隔 / 每浇水器桶数 |
+| `/farm harvestmode break\|use` | 收获方式 |
+| `/farm info` | dump 准星方块信息（方块 id/状态/NBT/附近实体，存 log） |
+| `/farm start / stop / status` | 开始/停止/状态（快捷键 K） |
+
+挖矿和种地不能同时运行（互斥）。
+
+## 构建
+
+JDK 21+（本机 25 可用）：
+
+```bash
+./gradlew build    # 或 ./.tools/gradle-9.6.1/bin/gradle build
+```
+
+产物 `build/libs/autominer-1.0.0.jar`，与 Fabric API 一起放入 mods。
+
+## 注意
+
+- 纯客户端实现（模拟按键/点击），不改服务器。
+- 在允许辅助工具的服务器/单人存档使用；公共服务器风险自负。

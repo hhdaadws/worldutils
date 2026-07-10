@@ -1,0 +1,28 @@
+# gradle
+.gradle/
+build/
+out/
+classes/
+.tools/
+
+# idea
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# vscode
+.vscode/
+bin/
+
+# eclipse
+.classpath
+.project
+.settings/
+
+# fabric
+run/
+remappedSrc/
+
+# local assistant settings
+.claude/
