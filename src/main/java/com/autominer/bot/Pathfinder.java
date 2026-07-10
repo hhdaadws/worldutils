@@ -70,6 +70,9 @@ public final class Pathfinder {
      */
     public static List<BlockPos> find(World world, BlockPos start, Predicate<BlockPos> goalTest,
                                       BlockPos target, int maxNodes) {
+        // 玩家站在 farmland/path 等不足一格高的方块上时，getBlockPos() 可能落在地面方块内。
+        // 先归一化为真正的“脚部空气格”，否则第一步会被误判为跳上一格。
+        start = normalizeStart(world, start);
         PriorityQueue<Node> open = new PriorityQueue<>();
         Map<Long, Double> best = new HashMap<>();
 
@@ -83,7 +86,7 @@ public final class Pathfinder {
             visited++;
 
             if (goalTest.test(cur.pos)) {
-                return reconstruct(cur);
+                return reconstruct(world, cur);
             }
 
             // 限制搜索范围，防止爆炸式扩张
@@ -124,7 +127,17 @@ public final class Pathfinder {
 
     private static void tryAdd(World world, PriorityQueue<Node> open, Map<Long, Double> best,
                                Node parent, BlockPos pos, double moveCost, BlockPos target) {
-        double g = parent.g + moveCost;
+        double turnPenalty = 0.0;
+        if (parent.parent != null) {
+            int previousDx = Integer.signum(parent.pos.getX() - parent.parent.pos.getX());
+            int previousDz = Integer.signum(parent.pos.getZ() - parent.parent.pos.getZ());
+            int nextDx = Integer.signum(pos.getX() - parent.pos.getX());
+            int nextDz = Integer.signum(pos.getZ() - parent.pos.getZ());
+            if (previousDx != nextDx || previousDz != nextDz) {
+                turnPenalty = 0.12; // 同等距离优先少转弯，减少逐格左右摆头
+            }
+        }
+        double g = parent.g + moveCost + turnPenalty;
         Long key = pos.asLong();
         Double old = best.get(key);
         if (old != null && old <= g) return;
@@ -139,7 +152,14 @@ public final class Pathfinder {
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    private static List<BlockPos> reconstruct(Node end) {
+    private static BlockPos normalizeStart(World world, BlockPos start) {
+        if (standable(world, start)) return start;
+        if (standable(world, start.up())) return start.up();
+        if (standable(world, start.down())) return start.down();
+        return start;
+    }
+
+    private static List<BlockPos> reconstruct(World world, Node end) {
         List<BlockPos> path = new ArrayList<>();
         Node n = end;
         while (n != null) {
@@ -147,7 +167,62 @@ public final class Pathfinder {
             n = n.parent;
         }
         java.util.Collections.reverse(path);
-        return path;
+        return smoothFlatSegments(world, path);
+    }
+
+    /**
+     * 把平面上逐格的曼哈顿折线路径压缩成可直走的长线段。
+     * 会检查玩家 0.6 格宽的四角、脚部/头部空间和连续地面，不跨高度、不切墙角或悬空。
+     */
+    private static List<BlockPos> smoothFlatSegments(World world, List<BlockPos> raw) {
+        if (raw.size() <= 2) return raw;
+        List<BlockPos> result = new ArrayList<>();
+        int anchor = 0;
+        result.add(raw.get(anchor));
+
+        while (anchor < raw.size() - 1) {
+            int farthest = anchor + 1;
+            int y = raw.get(anchor).getY();
+            for (int i = anchor + 2; i < raw.size(); i++) {
+                if (raw.get(i).getY() != y) break; // 上下台阶必须保留原始节点
+                if (!directlyWalkable(world, raw.get(anchor), raw.get(i))) break;
+                farthest = i;
+            }
+            result.add(raw.get(farthest));
+            anchor = farthest;
+        }
+        return result;
+    }
+
+    private static boolean directlyWalkable(World world, BlockPos from, BlockPos to) {
+        double x1 = from.getX() + 0.5;
+        double z1 = from.getZ() + 0.5;
+        double x2 = to.getX() + 0.5;
+        double z2 = to.getZ() + 0.5;
+        double distance = Math.hypot(x2 - x1, z2 - z1);
+        int samples = Math.max(1, (int) Math.ceil(distance * 4.0));
+        for (int i = 0; i <= samples; i++) {
+            double t = i / (double) samples;
+            double x = x1 + (x2 - x1) * t;
+            double z = z1 + (z2 - z1) * t;
+            if (!footprintStandable(world, x, from.getY(), z)) return false;
+        }
+        return true;
+    }
+
+    private static boolean footprintStandable(World world, double x, int y, double z) {
+        // 玩家宽 0.6 格，稍留余量，避免压线时碰墙。
+        double[] offsets = {-0.31, 0.31};
+        for (double ox : offsets) {
+            for (double oz : offsets) {
+                BlockPos foot = BlockPos.ofFloored(x + ox, y, z + oz);
+                if (!passable(world, foot) || !passable(world, foot.up())
+                        || !solidGround(world, foot.down())) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /** 寻找目标方块旁可站立、且眼睛在 reach 距离内的路径（种地/浇水等通用）。 */

@@ -18,7 +18,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 把收获的作物存进作物箱：QUICK_MOVE 存入除水桶/种子/保留格外的所有物品。
+ * 把收获的作物存进作物箱：QUICK_MOVE 存入除洒水壶/食物/种子/保留格外的所有物品。
  */
 public class FarmDepositController {
     public enum Result {
@@ -52,8 +52,10 @@ public class FarmDepositController {
             if (openAttempts >= 8) {
                 return Result.FAILED;
             }
+            if (!FarmLookController.smoothFace(player, Vec3d.ofCenter(chestPos))) {
+                return Result.WORKING;
+            }
             openAttempts++;
-            face(player);
             BlockHitResult hit = new BlockHitResult(
                     Vec3d.ofCenter(chestPos), Direction.UP, chestPos, false);
             mc.interactionManager.interactBlock(player, Hand.MAIN_HAND, hit);
@@ -86,20 +88,11 @@ public class FarmDepositController {
         return anyPending ? Result.CHEST_FULL : Result.DONE;
     }
 
-    /** 水桶（空/满）和所有已定义作物的种子留在背包，其余存入。 */
+    /** 插件洒水壶、食物和所有已定义作物种子留在背包，其余存入。 */
     public static boolean shouldKeep(FarmConfig cfg, ItemStack stack) {
-        if (FarmItems.isBucket(stack)) return true;
+        if (FarmItems.isWateringCan(cfg, stack)) return true;
+        if (FarmItems.isFood(cfg, stack)) return true;
         return FarmItems.isAnySeed(cfg, stack);
     }
 
-    private void face(ClientPlayerEntity player) {
-        Vec3d eye = player.getEyePos();
-        Vec3d c = Vec3d.ofCenter(chestPos);
-        double dx = c.x - eye.x;
-        double dy = c.y - eye.y;
-        double dz = c.z - eye.z;
-        double horiz = Math.sqrt(dx * dx + dz * dz);
-        player.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
-        player.setPitch((float) -Math.toDegrees(Math.atan2(dy, horiz)));
-    }
 }

@@ -10,6 +10,7 @@ public final class InputController {
     public static boolean forward = false;
     public static boolean jump = false;
     public static boolean sprint = false;
+    public static boolean sneak = false;
     public static boolean attack = false; // 按住左键（连续挖矿）
     public static boolean use = false;    // 按住右键（喝药水）
 
@@ -19,6 +20,7 @@ public final class InputController {
         forward = false;
         jump = false;
         sprint = false;
+        sneak = false;
         attack = false;
         use = false;
     }
@@ -27,6 +29,7 @@ public final class InputController {
         mc.options.forwardKey.setPressed(forward);
         mc.options.jumpKey.setPressed(jump);
         mc.options.sprintKey.setPressed(sprint);
+        mc.options.sneakKey.setPressed(sneak);
         mc.options.attackKey.setPressed(attack);
         mc.options.useKey.setPressed(use);
     }

@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 扫描农场区域：找耕地(farmland)、按小区域归类作物、
+ * 扫描所有小区域的并集：找耕地(farmland)、按小区域归类作物、
  * 用学习到的"成熟特征签名"判断作物是否成熟。
  */
 public final class FarmScanner {
@@ -26,19 +26,22 @@ public final class FarmScanner {
     }
 
     /** 一块地：耕地坐标、作物坐标(耕地上方)、所属作物名、状态。 */
-    public record Plot(BlockPos farmland, BlockPos crop, String cropName, PlotState state) {}
+    public record Plot(BlockPos farmland, BlockPos crop, String cropName, int zoneIndex, PlotState state) {}
 
-    /** 扫描大区域内所有耕地方块（只在开始/定期做一次，结果缓存）。 */
+    /** 扫描所有小 zone 内的耕地方块（重叠位置自动去重，只在开始/定期刷新缓存）。 */
     public static List<BlockPos> findFarmland(World world, FarmConfig cfg) {
-        List<BlockPos> out = new ArrayList<>();
-        FarmConfig.Region r = cfg.region;
-        if (r == null) return out;
-        for (BlockPos p : BlockPos.iterate(r.minX(), r.minY(), r.minZ(), r.maxX(), r.maxY(), r.maxZ())) {
-            if (world.getBlockState(p).isOf(Blocks.FARMLAND)) {
-                out.add(p.toImmutable());
+        java.util.LinkedHashSet<BlockPos> found = new java.util.LinkedHashSet<>();
+        for (FarmConfig.Zone zone : cfg.zones) {
+            if (zone == null || zone.box == null) continue;
+            FarmConfig.Region r = zone.box;
+            for (BlockPos p : BlockPos.iterate(
+                    r.minX(), r.minY(), r.minZ(), r.maxX(), r.maxY(), r.maxZ())) {
+                if (world.getBlockState(p).isOf(Blocks.FARMLAND)) {
+                    found.add(p.toImmutable());
+                }
             }
         }
-        return out;
+        return new ArrayList<>(found);
     }
 
     /** 对缓存的耕地列表做当前状态分类。不在任何小区域内的耕地忽略。 */
@@ -46,8 +49,9 @@ public final class FarmScanner {
         List<Plot> plots = new ArrayList<>();
         for (BlockPos f : farmland) {
             if (!world.getBlockState(f).isOf(Blocks.FARMLAND)) continue; // 可能被踩坏/改掉
-            String cropName = zoneCropAt(cfg, f);
-            if (cropName == null) continue;
+            int zoneIndex = zoneIndexAt(cfg, f);
+            if (zoneIndex < 0) continue;
+            String cropName = cfg.zones.get(zoneIndex).crop;
             BlockPos cropPos = f.up();
             BlockState st = world.getBlockState(cropPos);
             PlotState ps;
@@ -57,19 +61,24 @@ public final class FarmScanner {
                 FarmConfig.Crop crop = cfg.crops.get(cropName);
                 ps = (crop != null && matchesMature(crop, st)) ? PlotState.MATURE : PlotState.GROWING;
             }
-            plots.add(new Plot(f, cropPos, cropName, ps));
+            plots.add(new Plot(f, cropPos, cropName, zoneIndex, ps));
         }
         return plots;
     }
 
     /** 该耕地属于哪个小区域（返回作物名，命中第一个；没有则 null）。 */
     public static String zoneCropAt(FarmConfig cfg, BlockPos farmland) {
-        for (FarmConfig.Zone z : cfg.zones) {
-            if (z.box != null && z.box.contains(farmland, 1)) {
-                return z.crop;
-            }
+        int index = zoneIndexAt(cfg, farmland);
+        return index < 0 ? null : cfg.zones.get(index).crop;
+    }
+
+    /** 该耕地命中的第一个小区域编号；没有则 -1。 */
+    public static int zoneIndexAt(FarmConfig cfg, BlockPos farmland) {
+        for (int i = 0; i < cfg.zones.size(); i++) {
+            FarmConfig.Zone z = cfg.zones.get(i);
+            if (z.box != null && z.box.contains(farmland, 1)) return i;
         }
-        return null;
+        return -1;
     }
 
     /** 方块状态是否匹配该作物的任一成熟特征。 */

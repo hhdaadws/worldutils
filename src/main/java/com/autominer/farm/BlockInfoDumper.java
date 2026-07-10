@@ -7,6 +7,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
@@ -34,6 +35,17 @@ public final class BlockInfoDumper {
 
         BlockPos pos = null;
         HitResult hit = mc.crosshairTarget;
+        if (hit instanceof EntityHitResult ehr && hit.getType() == HitResult.Type.ENTITY) {
+            StringBuilder entityInfo = new StringBuilder();
+            entityInfo.append("§6==== 虚拟目标信息 ====§r\n");
+            entityInfo.append("维度: ").append(mc.world.getRegistryKey().getValue()).append("\n");
+            appendEntity(entityInfo, ehr.getEntity(), "准星目标");
+            BlockPos below = BlockPos.ofFloored(ehr.getPos());
+            appendBlock(entityInfo, mc, below, "目标位置方块");
+            String text = entityInfo.toString();
+            String logged = appendLog(text);
+            return text + "§7(已保存到 " + logged + "，可整段复制)";
+        }
         if (hit instanceof BlockHitResult bhr && hit.getType() == HitResult.Type.BLOCK) {
             pos = bhr.getBlockPos();
         } else {
@@ -57,17 +69,24 @@ public final class BlockInfoDumper {
                 new Box(pos).expand(2.0));
         sb.append("附近实体(").append(entities.size()).append("):\n");
         for (Entity e : entities) {
-            sb.append("  §e").append(Registries.ENTITY_TYPE.getId(e.getType()))
-                    .append("§r 名字=").append(e.getName().getString());
-            if (e.getCustomName() != null) {
-                sb.append(" 自定义名=").append(e.getCustomName().getString());
-            }
-            sb.append(String.format(" @(%.1f, %.1f, %.1f)%n", e.getX(), e.getY(), e.getZ()));
+            appendEntity(sb, e, "  附近");
         }
 
         String text = sb.toString();
         String logged = appendLog(text);
         return text + "§7(已保存到 " + logged + "，可整段复制)";
+    }
+
+    private static void appendEntity(StringBuilder sb, Entity entity, String label) {
+        sb.append(label).append(": §e").append(Registries.ENTITY_TYPE.getId(entity.getType()))
+                .append("§r class=").append(entity.getClass().getSimpleName())
+                .append(" id=").append(entity.getId())
+                .append(" 名字=").append(entity.getName().getString());
+        if (entity.getCustomName() != null) {
+            sb.append(" 自定义名=").append(entity.getCustomName().getString());
+        }
+        sb.append(String.format(" @(%.3f, %.3f, %.3f)", entity.getX(), entity.getY(), entity.getZ()))
+                .append(" box=").append(entity.getBoundingBox()).append("\n");
     }
 
     private static void appendBlock(StringBuilder sb, MinecraftClient mc, BlockPos pos, String label) {

@@ -12,12 +12,9 @@ import java.util.function.Predicate;
 
 /**
  * 农场物品工具：种子识别（实际物品 id + 自定义显示名子串匹配）、
- * 水桶识别、把目标物品换到主手。
+ * 插件洒水壶识别、把目标物品换到主手。
  */
 public final class FarmItems {
-    public static final String BUCKET = "minecraft:bucket";
-    public static final String WATER_BUCKET = "minecraft:water_bucket";
-
     private FarmItems() {}
 
     public static String idOf(ItemStack stack) {
@@ -42,10 +39,24 @@ public final class FarmItems {
         return false;
     }
 
-    public static boolean isBucket(ItemStack stack) {
-        if (stack.isEmpty()) return false;
-        String id = idOf(stack);
-        return id.equals(BUCKET) || id.equals(WATER_BUCKET);
+    /** 是否为绑定的食物：实际物品 id + 显示名精确匹配。 */
+    public static boolean isFood(FarmConfig cfg, ItemStack stack) {
+        if (stack.isEmpty() || cfg.food == null || cfg.food.itemId == null) return false;
+        if (!idOf(stack).equals(cfg.food.itemId)) return false;
+        return cfg.food.itemName == null || stack.getName().getString().equals(cfg.food.itemName);
+    }
+
+    public static boolean hasFood(ClientPlayerEntity player, FarmConfig cfg) {
+        return countMatching(player, stack -> isFood(cfg, stack)) > 0;
+    }
+
+    /** 是否为已绑定的插件洒水壶。 */
+    public static boolean isWateringCan(FarmConfig cfg, ItemStack stack) {
+        if (stack.isEmpty() || cfg.wateringCan == null || cfg.wateringCan.itemId == null) return false;
+        if (!idOf(stack).equals(cfg.wateringCan.itemId)) return false;
+        if (cfg.wateringCan.names == null || cfg.wateringCan.names.isEmpty()) return true;
+        String name = stack.getName().getString();
+        return cfg.wateringCan.names.stream().anyMatch(name::equals);
     }
 
     public static int countSeeds(ClientPlayerEntity player, FarmConfig.Crop crop) {
@@ -62,22 +73,24 @@ public final class FarmItems {
         return n;
     }
 
-    public static int waterBucketCount(ClientPlayerEntity player) {
-        return countMatching(player, s -> !s.isEmpty() && idOf(s).equals(WATER_BUCKET));
+    public static boolean hasWateringCan(ClientPlayerEntity player, FarmConfig cfg) {
+        return countMatching(player, s -> isWateringCan(cfg, s)) > 0;
     }
 
-    public static boolean hasWaterBucket(ClientPlayerEntity player) {
-        return waterBucketCount(player) > 0;
+    public static boolean isWateringCanInHand(ClientPlayerEntity player, FarmConfig cfg) {
+        return isWateringCan(cfg, player.getMainHandStack());
     }
 
-    public static boolean hasEmptyBucket(ClientPlayerEntity player) {
-        return countMatching(player, s -> !s.isEmpty() && idOf(s).equals(BUCKET)) > 0;
-    }
-
-    /** 主手是否拿着指定 id 的物品。 */
-    public static boolean isBucketInHand(ClientPlayerEntity player, String itemId) {
-        ItemStack held = player.getMainHandStack();
-        return !held.isEmpty() && idOf(held).equals(itemId);
+    /** 装水前后显示名变化时把新名字加入签名，避免下一步找不到同一把壶。 */
+    public static void rememberWateringCanState(FarmConfig cfg, ItemStack stack) {
+        if (stack.isEmpty() || cfg.wateringCan == null) return;
+        if (!idOf(stack).equals(cfg.wateringCan.itemId)) return;
+        if (cfg.wateringCan.names == null) cfg.wateringCan.names = new java.util.ArrayList<>();
+        String name = stack.getName().getString();
+        if (!cfg.wateringCan.names.contains(name)) {
+            cfg.wateringCan.names.add(name);
+            FarmConfig.save();
+        }
     }
 
     /**
@@ -112,14 +125,15 @@ public final class FarmItems {
         return false;
     }
 
-    /** 选一个快捷栏格子用来放换入的物品：优先空格，其次非水桶格，兜底当前选中格。 */
+    /** 选一个快捷栏格子用来放换入的物品：优先空格，其次非洒水壶格，兜底当前选中格。 */
     private static int chooseHotbarSlot(ClientPlayerEntity player) {
         PlayerInventory inv = player.getInventory();
         for (int i = 0; i < 9; i++) {
             if (inv.getStack(i).isEmpty()) return i;
         }
+        FarmConfig cfg = FarmConfig.get();
         for (int i = 0; i < 9; i++) {
-            if (!isBucket(inv.getStack(i))) return i;
+            if (!isWateringCan(cfg, inv.getStack(i))) return i;
         }
         return inv.getSelectedSlot();
     }

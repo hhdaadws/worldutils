@@ -65,8 +65,10 @@ public class ChestTakeController {
                 failReason = "打不开" + label;
                 return Result.FAILED;
             }
+            if (!FarmLookController.smoothFace(player, Vec3d.ofCenter(chestPos))) {
+                return Result.WORKING;
+            }
             openAttempts++;
-            face(player);
             BlockHitResult hit = new BlockHitResult(
                     Vec3d.ofCenter(chestPos), Direction.UP, chestPos, false);
             mc.interactionManager.interactBlock(player, Hand.MAIN_HAND, hit);
@@ -122,14 +124,4 @@ public class ChestTakeController {
         return false;
     }
 
-    private void face(ClientPlayerEntity player) {
-        Vec3d eye = player.getEyePos();
-        Vec3d c = Vec3d.ofCenter(chestPos);
-        double dx = c.x - eye.x;
-        double dy = c.y - eye.y;
-        double dz = c.z - eye.z;
-        double horiz = Math.sqrt(dx * dx + dz * dz);
-        player.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
-        player.setPitch((float) -Math.toDegrees(Math.atan2(dy, horiz)));
-    }
 }

@@ -8,19 +8,23 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 
 /**
  * /farm 指令集：区域选择、小区域分类、作物定义、箱子/浇水器/水源绑定、
- * 成熟特征学习、方块信息 dump、启停。
+ * 成熟特征学习、方块/虚拟实体信息 dump、启停。
  */
 public final class FarmCommands {
-    // 选区两角（内存态，pos1/pos2 共用于大区域和小区域）
+    // 小区域选区两角（内存态）
     private static BlockPos sel1 = null;
     private static BlockPos sel2 = null;
 
@@ -31,7 +35,6 @@ public final class FarmCommands {
                 // ---- 选区 ----
                 .then(ClientCommandManager.literal("pos1").executes(ctx -> setPos(ctx.getSource(), true)))
                 .then(ClientCommandManager.literal("pos2").executes(ctx -> setPos(ctx.getSource(), false)))
-                .then(ClientCommandManager.literal("region").executes(ctx -> setRegion(ctx.getSource())))
                 // ---- 小区域 ----
                 .then(ClientCommandManager.literal("zone")
                         .then(ClientCommandManager.literal("add")
@@ -121,7 +124,13 @@ public final class FarmCommands {
                 .then(ClientCommandManager.literal("unbindcrop").executes(ctx -> unbindCropChest(ctx.getSource())))
                 .then(ClientCommandManager.literal("bindwaterer").executes(ctx -> bindWaterer(ctx.getSource())))
                 .then(ClientCommandManager.literal("unbindwaterer").executes(ctx -> unbindWaterer(ctx.getSource())))
+                .then(ClientCommandManager.literal("bindcan").executes(ctx -> bindWateringCan(ctx.getSource())))
+                .then(ClientCommandManager.literal("unbindcan").executes(ctx -> unbindWateringCan(ctx.getSource())))
                 .then(ClientCommandManager.literal("bindwater").executes(ctx -> bindWaterSource(ctx.getSource())))
+                .then(ClientCommandManager.literal("bindfood").executes(ctx -> bindFood(ctx.getSource())))
+                .then(ClientCommandManager.literal("unbindfood").executes(ctx -> unbindFood(ctx.getSource())))
+                .then(ClientCommandManager.literal("bindfoodchest").executes(ctx -> bindFoodChest(ctx.getSource())))
+                .then(ClientCommandManager.literal("unbindfoodchest").executes(ctx -> unbindFoodChest(ctx.getSource())))
                 // ---- 参数 ----
                 .then(ClientCommandManager.literal("interval")
                         .then(ClientCommandManager.argument("minutes", IntegerArgumentType.integer(1, 1440))
@@ -133,16 +142,15 @@ public final class FarmCommands {
                                             + FarmConfig.get().waterIntervalMinutes + " 分钟");
                                     return Command.SINGLE_SUCCESS;
                                 })))
+                .then(ClientCommandManager.literal("canuses")
+                        .then(ClientCommandManager.argument("count", IntegerArgumentType.integer(1, 16))
+                                .executes(ctx -> setCanUses(ctx.getSource(),
+                                        IntegerArgumentType.getInteger(ctx, "count")))))
+                // 兼容旧版命令名
                 .then(ClientCommandManager.literal("buckets")
                         .then(ClientCommandManager.argument("count", IntegerArgumentType.integer(1, 16))
-                                .executes(ctx -> {
-                                    FarmConfig.get().bucketsPerWaterer =
-                                            IntegerArgumentType.getInteger(ctx, "count");
-                                    FarmConfig.save();
-                                    feedback(ctx.getSource(), "§a每个浇水器每轮倒 §e"
-                                            + FarmConfig.get().bucketsPerWaterer + " §a桶水");
-                                    return Command.SINGLE_SUCCESS;
-                                })))
+                                .executes(ctx -> setCanUses(ctx.getSource(),
+                                        IntegerArgumentType.getInteger(ctx, "count")))))
                 .then(ClientCommandManager.literal("harvestmode")
                         .then(ClientCommandManager.literal("break").executes(ctx -> {
                             FarmConfig.get().harvestMode = "break";
@@ -153,14 +161,14 @@ public final class FarmCommands {
                         .then(ClientCommandManager.literal("use").executes(ctx -> {
                             FarmConfig.get().harvestMode = "use";
                             FarmConfig.save();
-                            feedback(ctx.getSource(), "§a收获方式: §e右键收获(use)");
+                            feedback(ctx.getSource(), "§a收获方式: §e拿对应种子右键，自动收获并复种(use)");
                             return Command.SINGLE_SUCCESS;
                         })))
                 // ---- 信息 ----
                 .then(ClientCommandManager.literal("info").executes(ctx -> {
                     String text = BlockInfoDumper.dump(MinecraftClient.getInstance());
                     if (text == null) {
-                        feedback(ctx.getSource(), "§c请把准星对准要查看的方块（作物/浇水器等）再执行");
+                        feedback(ctx.getSource(), "§c请把准星对准要查看的方块或虚拟目标再执行");
                         return 0;
                     }
                     feedback(ctx.getSource(), text);
@@ -182,17 +190,19 @@ public final class FarmCommands {
                 .executes(ctx -> {
                     feedback(ctx.getSource(), """
                             §2AutoFarm 用法:§r
-                            §e/farm pos1|pos2§7 - 用准星选两个角(没指方块用脚下) §e/farm region§7 - 确认大区域
+                            §e/farm pos1|pos2§7 - 用准星选择小区域的两个角(没指方块用脚下)
                             §e/farm zone add <作物>§7 - 把当前选区设为种<作物>的小区域 (list/remove 管理)
                             §e/farm crop add <作物>§7 - §f手持种子§7执行，记录种子物品+名字
                             §e/farm bindseed <作物>§7 - 准星对准该作物的种子箱
                             §e/farm bindcrop§7 - 绑定作物存放箱(可多个) §e/farm unbindcrop§7 移除
-                            §e/farm bindwaterer§7 - 准星对准浇水器(可多个) §e/farm unbindwaterer§7 移除
-                            §e/farm bindwater§7 - 准星对准水面，设为装水点
+                            §e/farm bindwaterer§7 - 准星对准悬浮虚拟浇水器(可多个) §e/farm unbindwaterer§7 移除
+                            §e/farm bindcan§7 - §f手持插件洒水壶§7执行，记录洒水壶物品
+                            §e/farm bindwater§7 - 准星对准水面，设为洒水壶装水点
+                            §e/farm bindfood§7 - §f手持食物§7记录物品 §e/farm bindfoodchest§7 - 绑定食物箱
                             §e/farm learn <作物>§7 - 准星对准§f成熟§7作物，学习成熟特征
                             §e/farm info§7 - 查看准星方块的详细信息(发给开发者用)
-                            §e/farm interval <分钟>§7 - 浇水间隔(默认20) §e/farm buckets <n>§7 - 每浇水器桶数
-                            §e/farm harvestmode break|use§7 - 收获用左键挖还是右键
+                            §e/farm interval <分钟>§7 - 浇水间隔(默认20) §e/farm canuses <n>§7 - 每浇水器用几壶
+                            §e/farm harvestmode break|use§7 - 左键挖，或拿对应种子右键自动收获复种
                             §e/farm start | stop | status§7 - 开始/停止/状态 (快捷键 K)""");
                     return Command.SINGLE_SUCCESS;
                 }));
@@ -209,32 +219,13 @@ public final class FarmCommands {
         }
         if (first) sel1 = pos; else sel2 = pos;
         feedback(source, "§a已设置 pos" + (first ? 1 : 2) + ": §e" + pos.toShortString()
-                + (sel1 != null && sel2 != null ? "\n§7两角已齐，可 /farm region 或 /farm zone add <作物>" : ""));
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private static int setRegion(FabricClientCommandSource source) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (sel1 == null || sel2 == null) {
-            feedback(source, "§c请先用 /farm pos1 和 /farm pos2 选两个角");
-            return 0;
-        }
-        FarmConfig.Region r = new FarmConfig.Region(sel1, sel2);
-        if (r.volume() > 1_000_000) {
-            feedback(source, "§c区域太大(" + r.volume() + " 格)，请控制在 100 万格以内");
-            return 0;
-        }
-        FarmConfig cfg = FarmConfig.get();
-        cfg.region = r;
-        cfg.dim = mc.world.getRegistryKey().getValue().toString();
-        FarmConfig.save();
-        FarmBot.INSTANCE.invalidateCache();
-        feedback(source, "§a农场区域已设置: §e" + r + " §7(" + r.volume() + " 格) @ " + cfg.dim
-                + "\n§7接下来用 /farm zone add <作物> 划分小区域");
+                + (sel1 != null && sel2 != null ? "\n§7两角已齐，可 /farm zone add <作物>" : ""));
         return Command.SINGLE_SUCCESS;
     }
 
     private static int zoneAdd(FabricClientCommandSource source, String cropName) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null || mc.world == null) return 0;
         if (cropName.isEmpty()) {
             feedback(source, "§c作物名不能为空");
             return 0;
@@ -244,6 +235,7 @@ public final class FarmCommands {
             return 0;
         }
         FarmConfig cfg = FarmConfig.get();
+        if (!checkDim(source, mc)) return 0;
         FarmConfig.Region box = new FarmConfig.Region(sel1, sel2);
         cfg.zones.add(new FarmConfig.Zone(cropName, box));
         FarmConfig.save();
@@ -354,40 +346,69 @@ public final class FarmCommands {
 
     private static int bindWaterer(FabricClientCommandSource source) {
         MinecraftClient mc = MinecraftClient.getInstance();
-        BlockPos pos = crosshairBlock(mc);
-        if (pos == null) {
-            feedback(source, "§c请把准星对准浇水器再执行");
+        if (mc.player == null || mc.world == null) return 0;
+        FarmConfig.WatererTarget target = crosshairWaterer(mc);
+        if (target == null) {
+            feedback(source, "§c请把准星对准悬浮虚拟浇水器再执行");
             return 0;
         }
         if (!checkDim(source, mc)) return 0;
         FarmConfig cfg = FarmConfig.get();
-        for (ModConfig.Pos p : cfg.waterers) {
-            if (p.x == pos.getX() && p.y == pos.getY() && p.z == pos.getZ()) {
+        for (FarmConfig.WatererTarget existing : cfg.waterers) {
+            if (existing.squaredDistanceTo(target.targetPos()) <= 1.0) {
                 feedback(source, "§e这个浇水器已经绑定过了");
                 return 0;
             }
         }
-        cfg.waterers.add(new ModConfig.Pos(pos));
+        cfg.waterers.add(target);
         FarmConfig.save();
-        feedback(source, "§a已绑定浇水器 #" + cfg.waterers.size() + ": §e" + new ModConfig.Pos(pos)
-                + "\n§7记得 /farm bindwater 绑定装水点，并在背包放至少一个桶");
+        feedback(source, "§a已绑定虚拟浇水器 #" + cfg.waterers.size() + ": §e" + target
+                + "\n§7记得手持洒水壶 /farm bindcan，并用 /farm bindwater 绑定装水点");
         return Command.SINGLE_SUCCESS;
     }
 
     private static int unbindWaterer(FabricClientCommandSource source) {
         MinecraftClient mc = MinecraftClient.getInstance();
-        BlockPos pos = crosshairBlock(mc);
-        if (pos == null) {
-            feedback(source, "§c请把准星对准要解绑的浇水器");
+        FarmConfig.WatererTarget aimed = crosshairWaterer(mc);
+        if (aimed == null) {
+            feedback(source, "§c请把准星对准要解绑的虚拟浇水器");
             return 0;
         }
         FarmConfig cfg = FarmConfig.get();
-        boolean removed = cfg.waterers.removeIf(p ->
-                p.x == pos.getX() && p.y == pos.getY() && p.z == pos.getZ());
+        FarmConfig.WatererTarget nearest = cfg.waterers.stream()
+                .min(java.util.Comparator.comparingDouble(w -> w.squaredDistanceTo(aimed.targetPos())))
+                .orElse(null);
+        boolean removed = nearest != null && nearest.squaredDistanceTo(aimed.targetPos()) <= 9.0
+                && cfg.waterers.remove(nearest);
         FarmConfig.save();
         feedback(source, removed ? "§a已解绑该浇水器，剩余 " + cfg.waterers.size() + " 个"
                 : "§e该浇水器未绑定");
         return removed ? Command.SINGLE_SUCCESS : 0;
+    }
+
+    private static int bindWateringCan(FabricClientCommandSource source) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) return 0;
+        ItemStack held = mc.player.getMainHandStack();
+        if (held.isEmpty()) {
+            feedback(source, "§c请把插件洒水壶拿在主手再执行 /farm bindcan");
+            return 0;
+        }
+        FarmConfig cfg = FarmConfig.get();
+        cfg.wateringCan = new FarmConfig.WateringCan(FarmItems.idOf(held), held.getName().getString());
+        FarmConfig.save();
+        feedback(source, "§a已绑定插件洒水壶: §e" + cfg.wateringCan
+                + "\n§7机器人会拿它在水源右键装水，再右键悬浮浇水器");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int unbindWateringCan(FabricClientCommandSource source) {
+        FarmConfig cfg = FarmConfig.get();
+        boolean had = cfg.wateringCan != null;
+        cfg.wateringCan = null;
+        FarmConfig.save();
+        feedback(source, had ? "§a已解绑洒水壶" : "§e尚未绑定洒水壶");
+        return had ? Command.SINGLE_SUCCESS : 0;
     }
 
     private static int bindWaterSource(FabricClientCommandSource source) {
@@ -407,9 +428,76 @@ public final class FarmCommands {
         boolean isWater = !mc.world.getBlockState(pos).getFluidState().isEmpty();
         FarmConfig.get().waterSource = new ModConfig.Pos(pos);
         FarmConfig.save();
-        feedback(source, "§a已绑定装水点: §e" + FarmConfig.get().waterSource
+        feedback(source, "§a已绑定洒水壶装水点: §e" + FarmConfig.get().waterSource
                 + (isWater ? "" : "\n§e注意: 这个位置现在不是水方块，装水可能失败"));
         return Command.SINGLE_SUCCESS;
+    }
+
+    private static int bindFood(FabricClientCommandSource source) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) return 0;
+        ItemStack held = mc.player.getMainHandStack();
+        if (held.isEmpty()) {
+            feedback(source, "§c请把要自动吃的食物拿在主手再执行 /farm bindfood");
+            return 0;
+        }
+        FarmConfig cfg = FarmConfig.get();
+        cfg.food = new FarmConfig.FoodItem(FarmItems.idOf(held), held.getName().getString());
+        FarmConfig.save();
+        feedback(source, "§a已绑定食物: §e" + cfg.food
+                + "\n§7再对准食物箱执行 /farm bindfoodchest");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int unbindFood(FabricClientCommandSource source) {
+        FarmConfig cfg = FarmConfig.get();
+        boolean had = cfg.food != null;
+        cfg.food = null;
+        FarmConfig.save();
+        feedback(source, had ? "§a已解绑食物" : "§e尚未绑定食物");
+        return had ? Command.SINGLE_SUCCESS : 0;
+    }
+
+    private static int bindFoodChest(FabricClientCommandSource source) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        BlockPos pos = crosshairContainer(source, mc);
+        if (pos == null) return 0;
+        if (!checkDim(source, mc)) return 0;
+        FarmConfig.get().foodChest = new ModConfig.Pos(pos);
+        FarmConfig.save();
+        feedback(source, "§a已绑定食物箱: §e" + FarmConfig.get().foodChest);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int unbindFoodChest(FabricClientCommandSource source) {
+        FarmConfig cfg = FarmConfig.get();
+        boolean had = cfg.foodChest != null;
+        cfg.foodChest = null;
+        FarmConfig.save();
+        feedback(source, had ? "§a已解绑食物箱" : "§e尚未绑定食物箱");
+        return had ? Command.SINGLE_SUCCESS : 0;
+    }
+
+    private static int setCanUses(FabricClientCommandSource source, int count) {
+        FarmConfig.get().canUsesPerWaterer = count;
+        FarmConfig.save();
+        feedback(source, "§a每个浇水器每轮使用 §e" + count + " §a壶水");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static FarmConfig.WatererTarget crosshairWaterer(MinecraftClient mc) {
+        HitResult hit = mc.crosshairTarget;
+        if (hit instanceof EntityHitResult ehr && hit.getType() == HitResult.Type.ENTITY) {
+            Entity entity = ehr.getEntity();
+            String type = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+            String customName = entity.getCustomName() == null ? null : entity.getCustomName().getString();
+            return new FarmConfig.WatererTarget(ehr.getPos(), true, type, customName);
+        }
+        if (hit instanceof BlockHitResult bhr && hit.getType() == HitResult.Type.BLOCK) {
+            // 服务器虚拟物品可能没有客户端碰撞箱：记录准星射线落点，运行时朝这里使用洒水壶。
+            return new FarmConfig.WatererTarget(bhr.getPos(), false, null, null);
+        }
+        return null;
     }
 
     // ---------- 工具 ----------
@@ -444,7 +532,7 @@ public final class FarmCommands {
             return true;
         }
         if (!cfg.dim.equals(dim)) {
-            feedback(source, "§c必须和农场区域在同一维度（" + cfg.dim + "）");
+            feedback(source, "§c必须和已有小区域在同一维度（" + cfg.dim + "）");
             return false;
         }
         return true;
