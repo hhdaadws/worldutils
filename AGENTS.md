@@ -38,7 +38,7 @@ SCAN 调度（维持饱食 → 浇水 → 存物 → 背包现有种子补种 �
 | `bot/Bot` | 主状态机（单例）：TP_MINE/WAIT_MINE/MINING/TP_HOME/WAIT_HOME/PATH_TO_CHEST/DEPOSIT/PATH_TO_PICK/SWAP_PICK/PATH_TO_POTION/TAKE_POTION/DRINK/PATH_TO_FOOD/TAKE_FOOD/EAT |
 | `bot/MiningController` | 下挖到 y + 直线前挖 + 搭路/封液体 + 防卡转向 + 换镐到手 |
 | `bot/Pathfinder` | 客户端 A*（平走/跳1格/落3格）：起点高度归一化、少转弯代价、平面安全路径压缩 |
-| `bot/PathExecutor` | 沿压缩路径阻尼转向、拐点预瞄；直线疾跑，转弯/终点减速；真实脚底高度判断跳跃与卡住检测 |
+| `bot/PathExecutor` | 沿压缩路径按角差比例平滑转向、轻量拐点预瞄；朝准后前进，直线疾跑、转弯/终点减速；跳跃与卡住检测 |
 | `bot/MenuNavigator` | 回放传送操作：发指令 → 等菜单 syncId 变化 → 依次点格子（多级菜单） |
 | `bot/Recorder` | 录制传送操作：发指令后捕获玩家点击（HandledScreenMixin），位置突变自动保存 |
 | `bot/DepositController` | 存物箱：QUICK_MOVE 存入非保留物品；可选从中取镐（未绑镐子箱时） |
@@ -94,13 +94,13 @@ SCAN 调度（维持饱食 → 浇水 → 存物 → 背包现有种子补种 �
 - break 路径首 tick `attackBlock` + 后续 `updateBlockBreakingProgress`；产生的空地之后由 PLANT/TAKE_SEEDS 正常补种
 - zone 收获门槛按 `MATURE / (MATURE + GROWING) >= 50%`，EMPTY 不计分母；所有达标 zone 加入 `harvestBatchZones`，但严格逐 zone 处理
 - zone 内进入时按最近角确定固定蛇形方向，沿较长边逐行处理，不随玩家位置每格重排；蛇形无目标后刷新 farmland 缓存、清除本区临时黑名单，并用旧的最近目标顺序兜底一次
-- 锁定一个 zone 后先补种、再收获该区成熟作物；该区完成后进入 PICKUP_ZONE，只扫描该 zone 边界内的 ItemEntity，拾取完才切换下一区
+- 锁定收获 zone 后先收完该区全部成熟作物，再统一补种空地；左键收获产生的 EMPTY 不得中途打断蛇形收割；完成后进入 PICKUP_ZONE
 - 当前 zone 开收前按 cropName 去种子箱预取；单个箱失败后该作物进入 noSeedsUntilMs 并用 break 回退，不能阻塞本区收获和拾取
 - PICKUP_ZONE 扫描框按 zone 六方向各外扩一格；首次报告本区检测数量，远处 A* reach=1.25，1.2格内锁定一次 approachYaw 并直走14tick穿过目标
 - 单实体3次失败只加入当前轮临时忽略；结束前用不排除忽略项的原始实体列表复查，仍存活就清空忽略表再捡；连续4次间隔空扫描才确认本区完成
 - 换手（主背包 SWAP 到快捷栏）后必须等 2 tick 再交互，等背包同步
 - 背包快满但全是保留物品（种子/洒水壶/食物）时不去存箱，只提示一次——否则 SCAN↔DEPOSIT 死循环
-- 种地/箱子寻路用阻尼 yaw、拐点预瞄；仅方向稳定的直线段疾跑，明显转弯、接近终点或上台阶时降速，降低过冲和踩坏 farmland 的风险
+- 种地/箱子寻路按剩余角差比例平滑 yaw，并轻量预瞄拐点；基本朝准后才前进，仅稳定直线段疾跑，降低绕圈、过冲和踩坏 farmland 的风险
 - 农场方块、洒水器和箱子交互必须先由 FarmLookController 平滑对准到误差阈值内再点击，不能直接 setYaw/setPitch 瞬间锁头
 - farmland 顶面不足一格，不能用 `targetY > player.getBlockPos().getY()` 判断跳跃；必须比较路径脚部 Y 与 `player.getY()` 的实际高度差
 - 上升路径进入 2.2 格范围后持续按住跳跃直到越上目标高度，不依赖瞬时 `isOnGround`；`horizontalCollision` 作为漏判保险；起跳时显式 `setSprinting(false)`

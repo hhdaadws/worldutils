@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "autominer",
+  "id": "worldutils",
   "version": "${version}",
-  "name": "AutoMiner",
-  "description": "自动挖矿：背包满自动传送回家，寻路到绑定箱子存物，再传送回矿点继续挖。",
+  "name": "WorldUtils",
+  "description": "客户端实用工具集。",
   "authors": [
     "dev"
   ],
@@ -11,11 +11,11 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "com.autominer.AutoMinerClient"
+      "com.worldutils.WorldUtilsClient"
     ]
   },
   "mixins": [
-    "autominer.mixins.json"
+    "worldutils.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.16.0",
